@@ -348,24 +348,90 @@ playBtn.addEventListener('click',()=>{
 nextBtn.addEventListener('click',()=>{advanceToNext();});
 prevBtn.addEventListener('click',()=>{goToPrev();});
 
-/* CHROMECAST */
+/* CHROMECAST AVANZADO E SINCRONIZADO */
+let castPlayer = null;
+let castPlayerController = null;
+
 window.__onGCastApiAvailable = function(isAvailable) {
   if (isAvailable) {
     const context = cast.framework.CastContext.getInstance();
     context.setOptions({
       receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
-      autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED
+      autoJoinPolicy: chrome.cast.AutoJoinPolicy.PAGE_SCOPED
+    });
+
+    // Inicializamos o control remoto de Google Cast
+    castPlayer = new cast.framework.RemotePlayer();
+    castPlayerController = new cast.framework.RemotePlayerController(castPlayer);
+
+    // ESCREBITAR CANDOS CONECTA OU DESCONECTA O CHROMECAST
+    castPlayerController.addEventListener(
+      cast.framework.RemotePlayerEventType.IS_CONNECTED_CHANGED,
+      function() {
+        if (castPlayer.isConnected) {
+          console.log('Conectado a Chromecast!');
+          status.textContent = "Emitindo na TV...";
+          
+          // 1. Pausamos inmediatamente o vídeo local para que non se acople o son
+          video.pause();
+          
+          // 2. Apagamos o son do vídeo local por se acaso
+          video.muted = true;
+          
+          // 3. Enviamos o vídeo á TV xusto no segundo exacto onde ía no navegador
+          enviarVideoAChromecastConTempo(video.src, video.currentTime);
+        } else {
+          console.log('Desconectado de Chromecast.');
+          status.textContent = "Listo";
+          
+          // Cando desconectamos da TV, devolvemos o son ao vídeo local
+          video.muted = false;
+        }
+      }
+    );
+
+    // SINCRONIZACIÓN DE MANDOS: Cando pauses/reproducas na web, pásase á TV
+    video.addEventListener('play', () => {
+      if (castPlayer.isConnected && castPlayer.isPaused) {
+        castPlayerController.playOrPause();
+      }
+    });
+
+    video.addEventListener('pause', () => {
+      if (castPlayer.isConnected && !castPlayer.isPaused) {
+        castPlayerController.playOrPause();
+      }
+    });
+
+    // Se moves a barra de tempo no teu dispositivo, móvese na TV
+    video.addEventListener('seeking', () => {
+      if (castPlayer.isConnected) {
+        castPlayer.currentTime = video.currentTime;
+        castPlayerController.seek();
+      }
     });
   }
 };
 
-function sendToChromecastIfConnected(url){
+function enviarVideoAChromecastConTempo(url, segundoActual) {
   const context = cast.framework.CastContext.getInstance();
   const session = context.getCurrentSession();
-  if (session){
-    const mediaInfo = new chrome.cast.media.MediaInfo(url,'video/mp4');
+  
+  if (session) {
+    const mediaInfo = new chrome.cast.media.MediaInfo(url, 'video/mp4');
     const request = new chrome.cast.media.LoadRequest(mediaInfo);
-    session.loadMedia(request).then(()=>{console.log('Emitindo a Chromecast');},(err)=>{console.error(err);});
+    
+    // Indicamos á TV que empece a reproducir desde o segundo exacto onde ía o usuario
+    request.currentTime = segundoActual; 
+
+    session.loadMedia(request).then(
+      () => {
+        console.log('Emitindo a Chromecast desde o segundo ' + segundoActual);
+      },
+      (err) => {
+        console.error('Erro ao cargar en Chromecast:', err);
+      }
+    );
   }
 }
 </script>
