@@ -348,9 +348,11 @@ playBtn.addEventListener('click',()=>{
 nextBtn.addEventListener('click',()=>{advanceToNext();});
 prevBtn.addEventListener('click',()=>{goToPrev();});
 
-/* CHROMECAST AVANZADO E SINCRONIZADO */
+  /* CHROMECAST INTEGRADO ESTILO NETFLIX */
 let castPlayer = null;
 let castPlayerController = null;
+let sincronizadorReloxo = null; // Reloxo para actualizar a barra desde a TV
+let bloqueandoEventos Locais = false; // Evita bucles entre a TV e o móbil
 
 window.__onGCastApiAvailable = function(isAvailable) {
   if (isAvailable) {
@@ -360,11 +362,10 @@ window.__onGCastApiAvailable = function(isAvailable) {
       autoJoinPolicy: chrome.cast.AutoJoinPolicy.PAGE_SCOPED
     });
 
-    // Inicializamos o control remoto de Google Cast
     castPlayer = new cast.framework.RemotePlayer();
     castPlayerController = new cast.framework.RemotePlayerController(castPlayer);
 
-    // ESCREBITAR CANDOS CONECTA OU DESCONECTA O CHROMECAST
+    // CONTROL DE CONEXIÓN E DESCONEXIÓN
     castPlayerController.addEventListener(
       cast.framework.RemotePlayerEventType.IS_CONNECTED_CHANGED,
       function() {
@@ -372,39 +373,73 @@ window.__onGCastApiAvailable = function(isAvailable) {
           console.log('Conectado a Chromecast!');
           status.textContent = "Emitindo na TV...";
           
-          // 1. Pausamos inmediatamente o vídeo local para que non se acople o son
+          // 1. Pausamos e silenciamos por completo o vídeo local
           video.pause();
-          
-          // 2. Apagamos o son do vídeo local por se acaso
           video.muted = true;
           
-          // 3. Enviamos o vídeo á TV xusto no segundo exacto onde ía no navegador
+          // 2. Enviamos o vídeo á TV polo segundo onde ía
           enviarVideoAChromecastConTempo(video.src, video.currentTime);
+
+          // 3. Activamos o reloxo para sincronizar a barra de tempo da web coa TV
+          activarSincronizacionTV();
         } else {
           console.log('Desconectado de Chromecast.');
           status.textContent = "Listo";
           
-          // Cando desconectamos da TV, devolvemos o son ao vídeo local
+          // Ao desconectar, paramos o reloxo e devolvemos o control ao vídeo local
+          if (sincronizadorReloxo) clearInterval(sincronizadorReloxo);
           video.muted = false;
         }
       }
     );
 
-    // SINCRONIZACIÓN DE MANDOS: Cando pauses/reproducas na web, pásase á TV
-    video.addEventListener('play', () => {
-      if (castPlayer.isConnected && castPlayer.isPaused) {
-        castPlayerController.playOrPause();
+    // FUNCIÓN PARA QUE A BARRA DA WEB REFLECTE O TEMPO DA TELEVISIÓN
+    function activarSincronizacionTV() {
+      if (sincronizadorReloxo) clearInterval(sincronizadorReloxo);
+      
+      sincronizadorReloxo = setInterval(() => {
+        if (castPlayer.isConnected && castPlayer.duration > 0) {
+          // Bloqueamos temporalmente os eventos para que o vídeo local non intente reproducirse
+          bloqueandoEventosLocais = true;
+          
+          // Actualizamos a barra de progreso e as etiquetas da web coa info da TV
+          video.currentTime = castPlayer.currentTime; 
+          
+          // Sincronizamos o estado do botón de pausa/play na web
+          if (castPlayer.isPaused && !video.paused) {
+            video.pause();
+          } else if (!castPlayer.isPaused && video.paused) {
+            // Truco: reproducimos en silencio só para que o botón da web cambie a icona de "Pausa"
+            video.play().catch(()=>{});
+          }
+          
+          bloqueandoEventosLocais = false;
+        }
+      }, 1000); // Pregúntalle á TV cada segundo
+    }
+
+    // MANDOS: Cando toques os controis da web, cambias a TV
+    video.addEventListener('play', (e) => {
+      if (bloqueandoEventosLocais) return;
+      if (castPlayer.isConnected) {
+        // Pausamos o local para que non se vexa no móbil
+        video.pause(); 
+        if (castPlayer.isPaused) {
+          castPlayerController.playOrPause(); // Dálle a Play na TV
+        }
       }
     });
 
-    video.addEventListener('pause', () => {
+    video.addEventListener('pause', (e) => {
+      if (bloqueandoEventosLocais) return;
       if (castPlayer.isConnected && !castPlayer.isPaused) {
-        castPlayerController.playOrPause();
+        castPlayerController.playOrPause(); // Dálle a Pausa na TV
       }
     });
 
-    // Se moves a barra de tempo no teu dispositivo, móvese na TV
+    // Se arrastras a barra de tempo no teu dispositivo, salta na TV
     video.addEventListener('seeking', () => {
+      if (bloqueandoEventosLocais) return;
       if (castPlayer.isConnected) {
         castPlayer.currentTime = video.currentTime;
         castPlayerController.seek();
@@ -420,17 +455,11 @@ function enviarVideoAChromecastConTempo(url, segundoActual) {
   if (session) {
     const mediaInfo = new chrome.cast.media.MediaInfo(url, 'video/mp4');
     const request = new chrome.cast.media.LoadRequest(mediaInfo);
-    
-    // Indicamos á TV que empece a reproducir desde o segundo exacto onde ía o usuario
     request.currentTime = segundoActual; 
 
     session.loadMedia(request).then(
-      () => {
-        console.log('Emitindo a Chromecast desde o segundo ' + segundoActual);
-      },
-      (err) => {
-        console.error('Erro ao cargar en Chromecast:', err);
-      }
+      () => { console.log('Emitindo a TV dende o segundo ' + segundoActual); },
+      (err) => { console.error('Erro en Chromecast:', err); }
     );
   }
 }
