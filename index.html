@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="gl">
 <head>
-<link rel="icon" type="image/x-icon" href="pokeplay.ico">
+<link rel="icon" type="image/x-icon" href="pokeplay.ico?v=2">
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>PokéPlay</title>
@@ -72,7 +72,6 @@
     font-family:"Helvetica Neue", Helvetica, Arial, sans-serif;
   }
 
-  /* Dereita: imaxe da tempada */
   #rightCol{
     flex:0 0 260px;
     display:flex;
@@ -95,17 +94,16 @@
 
   #seasonImg.visible{opacity:1;}
 
-  /* Botón Chromecast */
+  /* Botón Chromecast (Cores restablecidas) */
   google-cast-launcher {
-    --disconnected-color: #666;
-    --connected-color: #661414;
-    --hover-color: #2196f3;
+    --disconnected-color: #efefef; /* Branco/Gris claro */
+    --connected-color: #4285f4;    /* Azul oficial de Google */
+    --hover-color: #8ab4f8;        /* Azul clariño ao pasar o rato */
     height: 30px;
     width: 30px;
     cursor: pointer;
   }
 
-  /* Botóns de navegación */
   #navButtons {
     display:flex;
     gap:10px;
@@ -156,6 +154,11 @@
     </div>
 
     <div id="player">
+      <div id="castOverlay" style="display: none; position: absolute; top: 8px; left: 8px; right: 8px; bottom: 42px; background: #111; color: #efefef; flex-direction: column; align-items: center; justify-content: center; border-radius: 6px; z-index: 10; font-size: 1.2rem;">
+        <span style="font-size: 3rem; margin-bottom: 10px;">📺</span>
+        <span>Reproducindo na túa televisión</span>
+      </div>
+
       <video id="video" controls preload="metadata"></video>
       <div class="meta">
         <div id="nowLabel"><strong>Sen reproducir</strong></div>
@@ -192,10 +195,10 @@ const status=document.getElementById('status');
 const img=document.getElementById('seasonImg');
 const nextBtn=document.getElementById('nextBtn');
 const prevBtn=document.getElementById('prevBtn');
+const castOverlay=document.getElementById('castOverlay');
 
 const numSeasons=episodesPerSeason.length;
 
-/* Poboar selectores */
 for(let s=1;s<=numSeasons;s++){
   const opt=document.createElement('option');
   opt.value=s;
@@ -228,13 +231,12 @@ function getEpisodeUrl(season,episode){
 let currentSeason=1;
 let currentEpisode=1;
 
-// --- NOVO: RECUPERAR DATOS GARDADOS AO CARGAR A PÁXINA ---
+// RECUPERAR DATOS GARDADOS (localStorage)
 const savedSeason = localStorage.getItem('pokeSeason');
 const savedEpisode = localStorage.getItem('pokeEpisode');
 const savedTime = localStorage.getItem('pokeTime');
 
 if (savedSeason && savedEpisode) {
-  // Se hai datos, configuramos todo por onde ía
   currentSeason = parseInt(savedSeason);
   currentEpisode = parseInt(savedEpisode);
   
@@ -245,16 +247,12 @@ if (savedSeason && savedEpisode) {
   
   nowLabel.innerHTML = `<strong>Continuar: T${currentSeason} · E${currentEpisode}</strong>`;
   status.textContent = `Progreso atopado. Listo para retomar.`;
-  
-  // Agachamos o tempo gardado nun dataset do botón Play
   playBtn.dataset.resumeTime = savedTime || 0;
 } else {
-  // Configuración por defecto se é a primeira vez
   seasonSelect.value=1;
   fillEpisodesForSeason(1);
   updateSeasonImage(1);
 }
-// --------------------------------------------------------
 
 function updateSeasonImage(season){
   const url=getSeasonImageUrl(season);
@@ -267,7 +265,6 @@ function updateSeasonImage(season){
   tempImg.src=url;
 }
 
-// --- MODIFICADO: ACEPTAR TEMPO DE RESUMO ---
 function loadAndPlayCurrent(resumeTime = 0){
   const url=getEpisodeUrl(currentSeason,currentEpisode);
   nowLabel.innerHTML=`<strong>T${currentSeason} · E${currentEpisode}</strong>`;
@@ -275,7 +272,6 @@ function loadAndPlayCurrent(resumeTime = 0){
   updateSeasonImage(currentSeason);
   video.src=url;
   
-  // Se hai tempo para retomar, esperamos a que carguen os datos do vídeo para saltar
   if (resumeTime > 0) {
     video.addEventListener('loadedmetadata', function onMetaLoad() {
       video.currentTime = parseFloat(resumeTime);
@@ -283,21 +279,30 @@ function loadAndPlayCurrent(resumeTime = 0){
     });
   }
 
+  // Se o Chromecast está conectado ao darlle a reproducir ou saltar capítulo
+  if (castPlayer && castPlayer.isConnected) {
+    video.pause();
+    video.muted = true;
+    castOverlay.style.display = 'flex';
+    enviarVideoAChromecastConTempo(url, resumeTime > 0 ? resumeTime : 0);
+    return;
+  }
+
+  // Reprodución normal no navegador
   video.play().then(()=>{status.textContent=`Reproducindo`;}).catch(()=>{status.textContent=`Listo`;});
-  sendToChromecastIfConnected(url);
 }
 
 function advanceToNext(){
   let s=currentSeason;
   let e=currentEpisode+1;
   if(e>episodesPerSeason[s-1]){s++;e=1;}
-  if(s>numSeasons){return false;}
+  if(s>numSeasons){return false;} // Non hai máis tempadas
   currentSeason=s;
   currentEpisode=e;
   seasonSelect.value=s;
   fillEpisodesForSeason(s);
   episodeSelect.value=e;
-  loadAndPlayCurrent(0); // Empeza desde 0
+  loadAndPlayCurrent(0);
   return true;
 }
 
@@ -310,36 +315,33 @@ function goToPrev(){
   seasonSelect.value=s;
   fillEpisodesForSeason(s);
   episodeSelect.value=e;
-  loadAndPlayCurrent(0); // Empeza desde 0
+  loadAndPlayCurrent(0);
 }
 
+// Eventos de vídeo local
 video.addEventListener('ended',()=>{setTimeout(()=>{advanceToNext();},400);});
 video.addEventListener('error',()=>{status.textContent=`Erro...`;setTimeout(()=>{advanceToNext();},800);});
 
-// --- NOVO: GARDAR O PROGRESO DO VÍDEO EN TEMPO REAL ---
+// Gardar o progreso do vídeo local
 video.addEventListener('timeupdate', () => {
-  if (video.currentTime > 0) {
+  if (video.currentTime > 0 && !bloqueandoEventosLocais) {
     localStorage.setItem('pokeSeason', currentSeason);
     localStorage.setItem('pokeEpisode', currentEpisode);
     localStorage.setItem('pokeTime', video.currentTime);
   }
 });
-// ------------------------------------------------------
 
 playBtn.addEventListener('click',()=>{
   const selectedSeason = parseInt(seasonSelect.value);
   const selectedEpisode = parseInt(episodeSelect.value);
   
   let timeToResume = 0;
-  // Só retomamos o tempo se o usuario lle dá a play á mesma tempada/episodio gardado
   if (selectedSeason === currentSeason && selectedEpisode === currentEpisode && playBtn.dataset.resumeTime) {
     timeToResume = parseFloat(playBtn.dataset.resumeTime);
   }
   
   currentSeason = selectedSeason;
   currentEpisode = selectedEpisode;
-  
-  // Limpamos a variable para futuras reproducións durante a mesma sesión
   playBtn.dataset.resumeTime = 0;
   
   loadAndPlayCurrent(timeToResume);
@@ -348,11 +350,11 @@ playBtn.addEventListener('click',()=>{
 nextBtn.addEventListener('click',()=>{advanceToNext();});
 prevBtn.addEventListener('click',()=>{goToPrev();});
 
-  /* CHROMECAST INTEGRADO ESTILO NETFLIX */
+/* CHROMECAST AVANZADO E INTEGRADO */
 let castPlayer = null;
 let castPlayerController = null;
-let sincronizadorReloxo = null; // Reloxo para actualizar a barra desde a TV
-let bloqueandoEventos Locais = false; // Evita bucles entre a TV e o móbil
+let sincronizadorReloxo = null;
+let bloqueandoEventosLocais = false;
 
 window.__onGCastApiAvailable = function(isAvailable) {
   if (isAvailable) {
@@ -365,79 +367,78 @@ window.__onGCastApiAvailable = function(isAvailable) {
     castPlayer = new cast.framework.RemotePlayer();
     castPlayerController = new cast.framework.RemotePlayerController(castPlayer);
 
-    // CONTROL DE CONEXIÓN E DESCONEXIÓN
     castPlayerController.addEventListener(
       cast.framework.RemotePlayerEventType.IS_CONNECTED_CHANGED,
       function() {
         if (castPlayer.isConnected) {
           console.log('Conectado a Chromecast!');
           status.textContent = "Emitindo na TV...";
-          
-          // 1. Pausamos e silenciamos por completo o vídeo local
           video.pause();
           video.muted = true;
+          castOverlay.style.display = 'flex';
           
-          // 2. Enviamos o vídeo á TV polo segundo onde ía
           enviarVideoAChromecastConTempo(video.src, video.currentTime);
-
-          // 3. Activamos o reloxo para sincronizar a barra de tempo da web coa TV
           activarSincronizacionTV();
         } else {
           console.log('Desconectado de Chromecast.');
           status.textContent = "Listo";
-          
-          // Ao desconectar, paramos o reloxo e devolvemos o control ao vídeo local
+          castOverlay.style.display = 'none';
           if (sincronizadorReloxo) clearInterval(sincronizadorReloxo);
           video.muted = false;
         }
       }
     );
 
-    // FUNCIÓN PARA QUE A BARRA DA WEB REFLECTE O TEMPO DA TELEVISIÓN
     function activarSincronizacionTV() {
       if (sincronizadorReloxo) clearInterval(sincronizadorReloxo);
       
       sincronizadorReloxo = setInterval(() => {
         if (castPlayer.isConnected && castPlayer.duration > 0) {
-          // Bloqueamos temporalmente os eventos para que o vídeo local non intente reproducirse
           bloqueandoEventosLocais = true;
-          
-          // Actualizamos a barra de progreso e as etiquetas da web coa info da TV
           video.currentTime = castPlayer.currentTime; 
           
-          // Sincronizamos o estado do botón de pausa/play na web
+          // Gardamos progreso do Chromecast
+          localStorage.setItem('pokeSeason', currentSeason);
+          localStorage.setItem('pokeEpisode', currentEpisode);
+          localStorage.setItem('pokeTime', castPlayer.currentTime);
+          
+          if (castPlayer.currentTime >= (castPlayer.duration - 1.5) || castPlayer.playerState === 'IDLE') {
+             console.log("Detectado final do episodio na TV.");
+             clearInterval(sincronizadorReloxo);
+             const haiMais = advanceToNext(); 
+             if (!haiMais) {
+               status.textContent = "Fin da serie";
+               castOverlay.style.display = 'none';
+             }
+             bloqueandoEventosLocais = false;
+             return;
+          }
+          
           if (castPlayer.isPaused && !video.paused) {
             video.pause();
           } else if (!castPlayer.isPaused && video.paused) {
-            // Truco: reproducimos en silencio só para que o botón da web cambie a icona de "Pausa"
             video.play().catch(()=>{});
           }
-          
           bloqueandoEventosLocais = false;
         }
-      }, 1000); // Pregúntalle á TV cada segundo
+      }, 1000);
     }
 
-    // MANDOS: Cando toques os controis da web, cambias a TV
-    video.addEventListener('play', (e) => {
+    video.addEventListener('play', () => {
       if (bloqueandoEventosLocais) return;
       if (castPlayer.isConnected) {
-        // Pausamos o local para que non se vexa no móbil
-        video.pause(); 
-        if (castPlayer.isPaused) {
-          castPlayerController.playOrPause(); // Dálle a Play na TV
-        }
+        video.pause();
+        if (castPlayer.isPaused) castPlayerController.playOrPause();
       }
     });
 
-    video.addEventListener('pause', (e) => {
+    video.addEventListener('pause', () => {
       if (bloqueandoEventosLocais) return;
       if (castPlayer.isConnected && !castPlayer.isPaused) {
-        castPlayerController.playOrPause(); // Dálle a Pausa na TV
+        castPlayerController.playOrPause();
       }
     });
 
-    // Se arrastras a barra de tempo no teu dispositivo, salta na TV
     video.addEventListener('seeking', () => {
       if (bloqueandoEventosLocais) return;
       if (castPlayer.isConnected) {
@@ -458,7 +459,10 @@ function enviarVideoAChromecastConTempo(url, segundoActual) {
     request.currentTime = segundoActual; 
 
     session.loadMedia(request).then(
-      () => { console.log('Emitindo a TV dende o segundo ' + segundoActual); },
+      () => { 
+        console.log('Emitindo a TV dende o segundo ' + segundoActual); 
+        setTimeout(() => { activarSincronizacionTV(); }, 1000);
+      },
       (err) => { console.error('Erro en Chromecast:', err); }
     );
   }
